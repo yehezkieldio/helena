@@ -161,6 +161,36 @@ export function ListenClient() {
       return;
     }
 
+    if (path === "websocket") {
+      const mediaUrl =
+        process.env.NEXT_PUBLIC_HELENA_MEDIA_WS_URL ??
+        "ws://127.0.0.1:8787/v1/fallback/ws";
+      const socket = new WebSocket(
+        `${mediaUrl}/${encodeURIComponent(roomId)}?token=${encodeURIComponent(token.token)}`,
+      );
+
+      socket.onopen = () => {
+        append(`WEBSOCKET RELAY OPEN / ${mediaUrl}`);
+      };
+      socket.onmessage = (event) => {
+        const text =
+          typeof event.data === "string"
+            ? event.data
+            : "BINARY RELAY FRAME RECEIVED";
+        append(`RELAY OBJECT / ${text.slice(0, 96)}`);
+        setState("ready");
+      };
+      socket.onerror = () => {
+        setError("WebSocket relay failed.");
+        setState("failed");
+        append("WEBSOCKET RELAY FAILED");
+      };
+      socket.onclose = () => {
+        append("WEBSOCKET RELAY CLOSED");
+      };
+      return;
+    }
+
     append(`FALLBACK PATH ACCEPTED / ${path.toUpperCase()} / ${endpoint}`);
     setState("ready");
   }

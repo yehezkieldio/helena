@@ -21,7 +21,7 @@ type PublishState =
   | "failed";
 
 const stateCopy: Record<PublishState, string> = {
-  accepted: "Offer accepted by edge",
+  accepted: "Edge answer accepted",
   capturing: "Microphone capture active",
   failed: "Publish failed",
   idle: "Awaiting operator input",
@@ -82,6 +82,27 @@ export function PublishClient() {
     tick();
   }
 
+  async function waitForIceGathering(peer: RTCPeerConnection) {
+    if (peer.iceGatheringState === "complete") return;
+
+    await new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(() => {
+        peer.removeEventListener("icegatheringstatechange", onStateChange);
+        resolve();
+      }, 2500);
+
+      function onStateChange() {
+        if (peer.iceGatheringState === "complete") {
+          window.clearTimeout(timeout);
+          peer.removeEventListener("icegatheringstatechange", onStateChange);
+          resolve();
+        }
+      }
+
+      peer.addEventListener("icegatheringstatechange", onStateChange);
+    });
+  }
+
   async function publish() {
     setError(null);
     setState("capturing");
@@ -128,6 +149,8 @@ export function PublishClient() {
       offerToReceiveVideo: false,
     });
     await peer.setLocalDescription(offer);
+    append("WAITING FOR LOCAL ICE CANDIDATES");
+    await waitForIceGathering(peer);
 
     const token = await issueToken("publish", roomId);
     append("ROOM TOKEN ISSUED");
@@ -140,14 +163,11 @@ export function PublishClient() {
     if (signalPayload.answer) {
       await peer.setRemoteDescription(signalPayload.answer);
       append("SDP ANSWER ACCEPTED");
+      setState("accepted");
       return;
     }
 
-    setState("accepted");
-    append(
-      signalPayload.status?.toUpperCase() ??
-        "MEDIA EDGE ACCEPTED OFFER CONTRACT",
-    );
+    throw new Error("Media edge did not return an SDP answer.");
   }
 
   async function onPublish() {
