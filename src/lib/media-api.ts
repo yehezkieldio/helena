@@ -1,6 +1,10 @@
 export type RoomSnapshot = {
   active_ingests: number;
   last_ingest_id: string | null;
+  moq_objects: number;
+  opus_packets: number;
+  recorded_opus_bytes: number;
+  recorded_opus_packets: number;
   room_id: string;
   subscriber_sessions: number;
   updated_at: number;

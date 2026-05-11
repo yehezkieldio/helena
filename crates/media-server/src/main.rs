@@ -1,9 +1,10 @@
 mod auth;
 mod error;
+mod recorder;
 mod state;
 mod webrtc_ingest;
 
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use auth::{TokenPurpose, verify_bearer, verify_token};
 use axum::{
@@ -93,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
     let config = MediaConfig {
         bind: std::env::var("HELENA_MEDIA_BIND").unwrap_or_else(|_| "127.0.0.1:8787".to_owned()),
         moq_draft: "draft-ietf-moq-transport-17",
+        recording_dir: recording_dir_from_env(),
         token_secret: std::env::var("HELENA_TOKEN_SECRET")
             .unwrap_or_else(|_| "helena-dev-secret".to_owned()),
     };
@@ -126,9 +128,17 @@ fn build_router(state: AppState) -> Router {
 }
 
 async fn healthz(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let recording = state
+        .recorder()
+        .map(|recorder| recorder.root().display().to_string());
     Json(serde_json::json!({
         "moqDraft": state.config.moq_draft,
         "ok": true,
+        "recording": {
+            "enabled": recording.is_some(),
+            "root": recording,
+            "totalOpusBytes": state.total_recorded_opus_bytes()
+        },
         "service": "helena-media-server",
         "totalMoqObjects": state.total_moq_objects()
     }))
@@ -214,10 +224,10 @@ async fn subscribe_moq(
 
 async fn hls_playlist(Path(room_id): Path<String>) -> Response {
     let body = format!(
-        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n# room {room_id} has no generated fallback segments yet\n",
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n# room {room_id} has no generated HLS segments yet; Opus recording is available on the media edge\n",
     );
     (
-        StatusCode::ACCEPTED,
+        StatusCode::NOT_IMPLEMENTED,
         [("content-type", "application/vnd.apple.mpegurl")],
         body,
     )
@@ -308,6 +318,25 @@ async fn relay_websocket(mut socket: WebSocket, state: AppState, room_id: String
         if socket.send(Message::Text(body.into())).await.is_err() {
             break;
         }
+
+        if socket
+            .send(Message::Binary(object.payload.clone().into()))
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
+fn recording_dir_from_env() -> Option<PathBuf> {
+    match std::env::var("HELENA_RECORDING_DIR") {
+        Ok(value) if value.eq_ignore_ascii_case("off") || value.eq_ignore_ascii_case("false") => {
+            None
+        }
+        Ok(value) if value.trim().is_empty() => None,
+        Ok(value) => Some(PathBuf::from(value)),
+        Err(_) => Some(PathBuf::from(".helena/recordings")),
     }
 }
 

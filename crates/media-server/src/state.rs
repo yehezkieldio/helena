@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{
         Arc, RwLock,
         atomic::{AtomicU64, Ordering},
@@ -13,7 +14,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 use webrtc::peer_connection::RTCPeerConnection;
 
-use crate::error::ApiError;
+use crate::{error::ApiError, recorder::OpusRecorder};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -22,12 +23,14 @@ pub struct AppState {
     room_relays: Arc<RwLock<HashMap<String, broadcast::Sender<RelayObject>>>>,
     sessions: Arc<RwLock<HashMap<Uuid, Arc<RTCPeerConnection>>>>,
     total_moq_objects: Arc<AtomicU64>,
+    total_recorded_opus_bytes: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MediaConfig {
     pub bind: String,
     pub moq_draft: &'static str,
+    pub recording_dir: Option<PathBuf>,
     pub token_secret: String,
 }
 
@@ -37,6 +40,8 @@ pub struct RoomSnapshot {
     pub last_ingest_id: Option<Uuid>,
     pub moq_objects: u64,
     pub opus_packets: u64,
+    pub recorded_opus_bytes: u64,
+    pub recorded_opus_packets: u64,
     pub room_id: String,
     pub subscriber_sessions: u32,
     pub updated_at: u64,
@@ -48,6 +53,8 @@ pub struct RelayObject {
     pub group_id: u64,
     pub ingest_id: Uuid,
     pub object_id: u64,
+    #[serde(skip)]
+    pub payload: Vec<u8>,
     pub payload_len: usize,
     pub room_id: String,
     pub rtp_timestamp: u32,
@@ -62,6 +69,7 @@ impl AppState {
             room_relays: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             total_moq_objects: Arc::new(AtomicU64::new(0)),
+            total_recorded_opus_bytes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -105,6 +113,7 @@ impl AppState {
             group_id: object.group_id,
             ingest_id,
             object_id: object.object_id,
+            payload: object.payload.to_vec(),
             payload_len: object.payload.len(),
             room_id: room_id.to_owned(),
             rtp_timestamp: object.rtp_timestamp,
@@ -113,6 +122,21 @@ impl AppState {
         if let Ok(sender) = self.room_relay(room_id) {
             let _ = sender.send(relay_object);
         }
+
+        let recorded_bytes = self.recorder().and_then(|recorder| {
+            match recorder.record(room_id, ingest_id, object) {
+                Ok(bytes) => Some(bytes as u64),
+                Err(error) => {
+                    tracing::warn!(
+                        room_id,
+                        ingest_id = %ingest_id,
+                        %error,
+                        "failed to persist Opus packet"
+                    );
+                    None
+                }
+            }
+        });
 
         let mut rooms = self
             .rooms
@@ -125,6 +149,12 @@ impl AppState {
         room.opus_packets = room.opus_packets.saturating_add(1);
         room.moq_objects = room.moq_objects.saturating_add(1);
         self.total_moq_objects.fetch_add(1, Ordering::Relaxed);
+        if let Some(bytes) = recorded_bytes {
+            room.recorded_opus_packets = room.recorded_opus_packets.saturating_add(1);
+            room.recorded_opus_bytes = room.recorded_opus_bytes.saturating_add(bytes);
+            self.total_recorded_opus_bytes
+                .fetch_add(bytes, Ordering::Relaxed);
+        }
         room.updated_at = unix_now();
 
         Ok(room.clone())
@@ -206,6 +236,14 @@ impl AppState {
         self.total_moq_objects.load(Ordering::Relaxed)
     }
 
+    pub fn total_recorded_opus_bytes(&self) -> u64 {
+        self.total_recorded_opus_bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn recorder(&self) -> Option<OpusRecorder> {
+        self.config.recording_dir.clone().map(OpusRecorder::new)
+    }
+
     fn room_relay(&self, room_id: &str) -> Result<broadcast::Sender<RelayObject>, ApiError> {
         {
             let relays = self
@@ -240,6 +278,8 @@ impl RoomSnapshot {
             last_ingest_id: None,
             moq_objects: 0,
             opus_packets: 0,
+            recorded_opus_bytes: 0,
+            recorded_opus_packets: 0,
             room_id,
             subscriber_sessions: 0,
             updated_at: unix_now(),

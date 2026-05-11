@@ -2,8 +2,8 @@
 .env
 .env.local
 .next/
+.helena/
 node_modules/
 target/
 dist/
 *.tsbuildinfo
-

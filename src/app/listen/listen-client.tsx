@@ -55,6 +55,8 @@ export function ListenClient() {
   const [path, setPath] = useState<ListenPath>(() => choosePath());
   const [state, setState] = useState<ListenState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [binaryFrames, setBinaryFrames] = useState(0);
+  const [binaryBytes, setBinaryBytes] = useState(0);
   const [log, setLog] = useState<string[]>(["LISTENER READY"]);
 
   const endpoint = useMemo(() => {
@@ -83,11 +85,15 @@ export function ListenClient() {
     setPath(nextPath);
     setState("idle");
     setError(null);
+    setBinaryFrames(0);
+    setBinaryBytes(0);
     append(`PATH SELECTED / ${nextPath.toUpperCase()}`);
   }
 
   async function connect() {
     setError(null);
+    setBinaryFrames(0);
+    setBinaryBytes(0);
     setState("authorizing");
 
     const token = await issueToken("subscribe", roomId).catch(
@@ -173,10 +179,19 @@ export function ListenClient() {
         append(`WEBSOCKET RELAY OPEN / ${mediaUrl}`);
       };
       socket.onmessage = (event) => {
-        const text =
-          typeof event.data === "string"
-            ? event.data
-            : "BINARY RELAY FRAME RECEIVED";
+        if (typeof event.data !== "string") {
+          const byteLength =
+            event.data instanceof Blob
+              ? event.data.size
+              : event.data.byteLength;
+          setBinaryFrames((current) => current + 1);
+          setBinaryBytes((current) => current + byteLength);
+          append(`OPUS PAYLOAD FRAME / ${byteLength} BYTES`);
+          setState("ready");
+          return;
+        }
+
+        const text = event.data;
         append(`RELAY OBJECT / ${text.slice(0, 96)}`);
         setState("ready");
       };
@@ -298,6 +313,12 @@ export function ListenClient() {
             </li>
             <li>
               Endpoint <span className="badge">{endpoint}</span>
+            </li>
+            <li>
+              Opus frames{" "}
+              <span className="badge">
+                {binaryFrames} / {binaryBytes} bytes
+              </span>
             </li>
             <li>
               Session <span className="badge">{stateCopy[state]}</span>

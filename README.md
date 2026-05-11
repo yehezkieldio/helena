@@ -43,11 +43,15 @@ room state, RTP/Opus packet handling, and relay fan-out.
   edge verifies audience, expiry, purpose, room id, and signature before
   accepting publish or subscribe requests.
 - **Observable Room State**: `/api/rooms/[roomId]` exposes active ingests,
-  subscriber sessions, received Opus packets, generated MoQ-style objects, and
-  the last ingest id.
+  subscriber sessions, received Opus packets, recorded Opus bytes, generated
+  MoQ-style objects, and the last ingest id.
+- **Persistent Opus Recorder**: the media edge writes each bridged Opus payload
+  to a length-prefixed `.hopus` packet archive with a JSONL packet index under
+  `HELENA_RECORDING_DIR`.
 - **Subscriber Fallback Relay**: `/v1/fallback/ws/{room_id}` streams bridged
-  object metadata to WebSocket subscribers, proving the ingest-to-relay path
-  while MoQ/WebTransport remains pinned behind the protocol boundary.
+  object metadata and the raw Opus payload as paired WebSocket messages, proving
+  the ingest-to-relay path while MoQ/WebTransport remains pinned behind the
+  protocol boundary.
 - **Operational UI**: `/listen` presents explicit delivery choices for
   MoQ/WebTransport, WebRTC, HLS, and WebSocket fallback paths instead of hiding
   browser capability gaps.
@@ -72,10 +76,13 @@ Each browser publish session runs through a fixed sequence of stages:
    from the browser's Opus audio stream.
 6. **Bridge**: RTP/Opus packets are passed into `RtpToMoqBridge`, which produces
    ordered MoQ-style objects grouped by media clock duration.
-7. **Relay**: The media edge publishes object metadata into an in-process room
-   broadcast channel. WebSocket fallback subscribers receive those objects as
-   JSON messages.
-8. **Observe**: Room counters update as packets and objects flow, making ingest
+7. **Persist**: the media edge appends each Opus payload to
+   `opus-packets.hopus` and writes a matching `index.jsonl` record for replay,
+   analysis, or later packaging.
+8. **Relay**: The media edge publishes object metadata and Opus payload bytes
+   into an in-process room broadcast channel. WebSocket fallback subscribers
+   receive paired JSON metadata and binary payload messages.
+9. **Observe**: Room counters update as packets and objects flow, making ingest
    and relay behavior visible through both API and UI surfaces.
 
 ## Workspace Layout
@@ -87,17 +94,19 @@ Each browser publish session runs through a fixed sequence of stages:
 - `crates/media-core`: codec-neutral primitives currently focused on RTP/Opus
   packet mapping into MoQ-style objects.
 - `crates/media-server`: Rust media edge with auth, room state, WebRTC ingest,
-  HLS placeholder output, MoQ session metadata, and WebSocket fallback relay.
+  Opus recording, HLS status output, MoQ session metadata, and WebSocket
+  fallback relay.
 
 Important media-server modules:
 
 - `auth.rs`: HMAC token verification and claim validation.
 - `state.rs`: room snapshots, active peer registry, packet/object counters, and
   relay broadcast channels.
+- `recorder.rs`: persistent Opus packet archive writer and JSONL packet index.
 - `webrtc_ingest.rs`: `webrtc-rs` answerer setup, SDP answering, Opus RTP read
   loop, and bridge handoff.
 - `main.rs`: Axum routes, health endpoint, publish/subscribe contracts, HLS
-  placeholder, and WebSocket relay endpoint.
+  status response, and WebSocket relay endpoint.
 
 ## Protocol Status
 
@@ -110,8 +119,9 @@ Helena distinguishes between implemented behavior and intended transport shape:
 | Rust SDP answer                | Implemented     | `webrtc = "0.8"` is pinned through `webrtc-rs`.                        |
 | RTP/Opus ingest                | Implemented     | Rust receives packets from the browser audio track.                    |
 | RTP to MoQ-style object bridge | Implemented     | Local bridge groups packets into ordered objects.                      |
-| WebSocket subscriber fallback  | Implemented     | Streams object metadata for subscriber-visible proof.                  |
-| HLS fallback                   | Placeholder     | Route exists, segment generation is not implemented.                   |
+| Persistent Opus recording      | Implemented     | Writes `.hopus` payload archives and `index.jsonl` packet metadata.    |
+| WebSocket subscriber fallback  | Implemented     | Streams JSON metadata plus raw Opus binary frames.                     |
+| HLS fallback                   | Explicit gap    | Route returns a playlist-shaped 501 until segment generation is added. |
 | Native MoQ/WebTransport wire   | Not implemented | Must pin `moq-lite`/`moq-native`/`moq-relay` before production wiring. |
 
 MOQT is still evolving. As of this checkout, Helena treats
@@ -154,6 +164,7 @@ The important values are:
 | `HELENA_MEDIA_URL`                          | Next.js server-side URL for the Rust media edge | `http://127.0.0.1:8787`              |
 | `HELENA_MEDIA_BIND`                         | Rust media edge bind address                    | `127.0.0.1:8787`                     |
 | `HELENA_TOKEN_SECRET`                       | Shared HMAC secret used by Next.js and Rust     | `helena-dev-secret`                  |
+| `HELENA_RECORDING_DIR`                      | Persistent Opus packet archive directory        | `.helena/recordings`                 |
 | `NEXT_PUBLIC_HELENA_MEDIA_WEBTRANSPORT_URL` | Browser WebTransport target shown by `/listen`  | `https://127.0.0.1:8788/moq`         |
 | `NEXT_PUBLIC_HELENA_MEDIA_WS_URL`           | Browser WebSocket fallback relay base URL       | `ws://127.0.0.1:8787/v1/fallback/ws` |
 
@@ -190,15 +201,17 @@ Open:
 Start a WebSocket subscriber with a `subscribe` token, then publish from the
 studio. The subscriber should receive JSON relay messages containing fields such
 as `group_id`, `object_id`, `sequence_number`, `rtp_timestamp`, and
-`payload_len`.
+`payload_len`, followed by a binary WebSocket message containing the raw Opus
+payload for that object.
 
 The Playwright fake-microphone smoke used during development proved:
 
 - the studio reaches `PEER CONNECTION LIVE`
 - the Rust edge receives hundreds of Opus RTP packets
 - the bridge emits hundreds of MoQ-style objects
-- the WebSocket subscriber receives object metadata while the publish session is
-  active
+- the WebSocket subscriber receives object metadata and binary Opus payloads
+  while the publish session is active
+- the media edge writes packet archives under `.helena/recordings`
 
 ## Development
 
@@ -227,20 +240,27 @@ for formatting and production builds.
 
 ## Operations and Observability
 
-- **Health**: `GET /healthz` reports service health, target MoQ draft label, and
-  total generated MoQ-style objects.
+- **Health**: `GET /healthz` reports service health, target MoQ draft label,
+  total generated MoQ-style objects, recording enablement, recording root, and
+  recorded Opus bytes.
 - **Room status**: `GET /v1/rooms/{room_id}` on the Rust edge, or
   `GET /api/rooms/[roomId]` through Next.js, reports active ingests,
-  subscribers, packet counters, object counters, and last ingest id.
+  subscribers, packet counters, object counters, recording counters, and last
+  ingest id.
 - **Publish**: `POST /v1/webrtc/publish` accepts an SDP offer with a valid
   `publish` token and returns an SDP answer.
 - **MoQ subscribe contract**: `POST /v1/moq/subscribe` verifies a `subscribe`
   token and records subscriber intent. It does not establish a WebTransport MoQ
   session yet.
 - **WebSocket fallback**: `GET /v1/fallback/ws/{room_id}?token=...` upgrades to
-  a WebSocket and streams bridged object metadata for that room.
-- **HLS placeholder**: `GET /v1/fallback/hls/{room_id}/playlist.m3u8` returns an
-  accepted placeholder playlist until segment generation is implemented.
+  a WebSocket and streams paired JSON object metadata plus binary Opus payloads
+  for that room.
+- **Recorder**: `HELENA_RECORDING_DIR` controls where `.hopus` packet archives
+  and `index.jsonl` metadata files are written. Set it to `off` or `false` to
+  disable recording.
+- **HLS status**: `GET /v1/fallback/hls/{room_id}/playlist.m3u8` returns a
+  playlist-shaped `501 Not Implemented` response until segment generation is
+  implemented.
 - **Logging**: Rust logs are controlled by `RUST_LOG`; WebRTC connection state
   transitions and RTP read-loop termination are logged by the media edge.
 
@@ -248,14 +268,14 @@ for formatting and production builds.
 
 - No TURN server configuration surface yet. Local and LAN tests work, but
   production deployment needs explicit NAT traversal strategy.
-- No persistent recorder or transcoder. Opus payloads are bridged in memory and
-  not saved.
-- No HLS segment generation yet. The route is present as a compatibility
-  contract.
+- No transcoder. Opus payloads are preserved end-to-end and recorded, but no
+  decode/resample/transcode path exists yet.
+- No HLS segment generation yet. The route now fails explicitly with `501`
+  instead of pretending a playable playlist exists.
 - No browser-native MoQ/WebTransport delivery yet. The UI exposes it as the
   preferred path, but the server does not run an IETF MoQ WebTransport session.
-- The WebSocket fallback currently streams object metadata, not raw Opus payload
-  frames to an audio decoder.
+- The WebSocket fallback streams raw Opus frames, but the browser listener does
+  not decode/play them yet.
 
 ## License
 
