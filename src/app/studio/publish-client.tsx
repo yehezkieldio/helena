@@ -2,9 +2,16 @@
 
 import { Mic, Radio, Square } from "lucide-react";
 import { useRef, useState } from "react";
+import { issueToken, publishOffer } from "@/lib/media-api";
 import { DEFAULT_ROOM_ID, normalizeRoomId } from "@/lib/rooms";
 
-type PublishState = "idle" | "capturing" | "signaling" | "live" | "failed";
+type PublishState =
+  | "idle"
+  | "capturing"
+  | "signaling"
+  | "accepted"
+  | "live"
+  | "failed";
 
 export function PublishClient() {
   const [roomId, setRoomId] = useState(DEFAULT_ROOM_ID);
@@ -88,45 +95,24 @@ export function PublishClient() {
     });
     await peer.setLocalDescription(offer);
 
-    const tokenResponse = await fetch("/api/token", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ purpose: "publish", roomId }),
+    const token = await issueToken("publish", roomId);
+    const signalPayload = await publishOffer({
+      offer: peer.localDescription,
+      roomId,
+      token: token.token,
     });
-    const tokenPayload = (await tokenResponse.json()) as {
-      token?: string;
-      error?: string;
-    };
 
-    if (!tokenResponse.ok || !tokenPayload.token) {
-      throw new Error(tokenPayload.error ?? "Could not issue publish token.");
+    if (signalPayload.answer) {
+      await peer.setRemoteDescription(signalPayload.answer);
+      append("SDP answer accepted.");
+      return;
     }
 
-    const signalResponse = await fetch("/api/signaling/offer", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        offer: peer.localDescription,
-        roomId,
-        token: tokenPayload.token,
-      }),
-    });
-    const signalPayload = (await signalResponse.json()) as {
-      answer?: RTCSessionDescriptionInit;
-      error?: string;
-      status?: string;
-    };
-
-    if (!signalResponse.ok || !signalPayload.answer) {
-      throw new Error(
-        signalPayload.error ??
-          signalPayload.status ??
-          "Media edge did not return an SDP answer yet.",
-      );
-    }
-
-    await peer.setRemoteDescription(signalPayload.answer);
-    append("SDP answer accepted.");
+    setState("accepted");
+    append(
+      signalPayload.status ??
+        "Media edge accepted the offer contract; SDP answer is not implemented yet.",
+    );
   }
 
   async function onPublish() {
@@ -190,7 +176,10 @@ export function PublishClient() {
             Audio <span className="badge">Opus target</span>
           </li>
           <li>
-            Input <span className="badge"><Mic size={14} /> mic</span>
+            Input{" "}
+            <span className="badge">
+              <Mic size={14} /> mic
+            </span>
           </li>
         </ul>
         <div className="log" aria-live="polite">
@@ -202,4 +191,3 @@ export function PublishClient() {
     </div>
   );
 }
-

@@ -86,7 +86,9 @@ pub fn verify_token(
         return Err(ApiError::unauthorized("token room does not match request"));
     }
     if claims.purpose != expected_purpose.as_str() {
-        return Err(ApiError::unauthorized("token purpose does not match request"));
+        return Err(ApiError::unauthorized(
+            "token purpose does not match request",
+        ));
     }
     if claims.exp <= unix_now() {
         return Err(ApiError::unauthorized("token expired"));
@@ -151,10 +153,9 @@ mod tests {
     #[test]
     fn rejects_wrong_room() {
         let token = test_token("secret", "lobby", "publish", u64::MAX);
-        let error = verify_token(&token, "secret", TokenPurpose::Publish, "other")
-            .expect_err("wrong room");
+        let error =
+            verify_token(&token, "secret", TokenPurpose::Publish, "other").expect_err("wrong room");
 
         assert_eq!(error.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
 }
-

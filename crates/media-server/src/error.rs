@@ -39,6 +39,7 @@ impl ApiError {
         }
     }
 
+    #[cfg(test)]
     pub fn status(&self) -> StatusCode {
         self.status
     }
@@ -56,4 +57,3 @@ impl IntoResponse for ApiError {
             .into_response()
     }
 }
-

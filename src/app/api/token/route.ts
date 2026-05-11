@@ -26,4 +26,3 @@ export async function POST(request: NextRequest) {
     token: issued.token,
   });
 }
-

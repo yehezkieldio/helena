@@ -8,8 +8,10 @@ Audio-only live rooms with WebRTC ingest, preferred WebTransport/MoQ delivery, a
 - `src/app/listen`: prefers WebTransport/MoQ when available, then falls back to browser-compatible paths.
 - `src/app/api/token`: issues short-lived room tokens from Next.js.
 - `src/app/api/signaling/offer`: forwards SDP offers to the Rust media edge.
+- `src/app/api/moq/subscribe`: forwards subscribe intent to the Rust media edge.
+- `src/app/api/rooms/[roomId]`: exposes media-edge room state for UI/debug surfaces.
 - `crates/media-core`: RTP/Opus to MoQ object mapping primitives.
-- `crates/media-server`: Rust control plane for health, ingest contracts, MoQ session metadata, and fallback placeholders.
+- `crates/media-server`: Rust control plane for token verification, room state, ingest contracts, MoQ session metadata, and fallback placeholders.
 
 ## Protocol Pinning
 
@@ -34,7 +36,9 @@ In another shell:
 cargo run -p helena-media-server
 ```
 
-Next.js expects the media edge at `HELENA_MEDIA_URL`, defaulting to `http://127.0.0.1:8787`.
+Next.js expects the media edge at `HELENA_MEDIA_URL`, defaulting to `http://127.0.0.1:8787`. Both Next.js and Rust must share `HELENA_TOKEN_SECRET`; the development fallback is `helena-dev-secret`.
+
+Copy `.env.example` to `.env.local` when you want to override local defaults.
 
 ## Validation
 
@@ -44,4 +48,3 @@ cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 ```
-

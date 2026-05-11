@@ -6,9 +6,9 @@ export default function Home() {
       <section className="panel">
         <h1>Live rooms that keep Opus on the wire.</h1>
         <p>
-          Helena is wired as a browser studio, a MoQ/WebTransport-first listener,
-          and a Rust media edge for ingest, packet bridging, relay, and fallback
-          outputs.
+          Helena is wired as a browser studio, a MoQ/WebTransport-first
+          listener, and a Rust media edge for ingest, packet bridging, relay,
+          and fallback outputs.
         </p>
       </section>
       <section className="panel stack">
@@ -34,4 +34,3 @@ export default function Home() {
     </div>
   );
 }
-

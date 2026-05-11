@@ -44,13 +44,15 @@ impl AppState {
             .rooms
             .write()
             .map_err(|_| ApiError::internal("room registry lock poisoned"))?;
-        let room = rooms.entry(room_id.to_owned()).or_insert_with(|| RoomSnapshot {
-            active_ingests: 0,
-            last_ingest_id: None,
-            room_id: room_id.to_owned(),
-            subscriber_sessions: 0,
-            updated_at: unix_now(),
-        });
+        let room = rooms
+            .entry(room_id.to_owned())
+            .or_insert_with(|| RoomSnapshot {
+                active_ingests: 0,
+                last_ingest_id: None,
+                room_id: room_id.to_owned(),
+                subscriber_sessions: 0,
+                updated_at: unix_now(),
+            });
 
         room.active_ingests = room.active_ingests.saturating_add(1);
         room.last_ingest_id = Some(ingest_id);
@@ -64,13 +66,15 @@ impl AppState {
             .rooms
             .write()
             .map_err(|_| ApiError::internal("room registry lock poisoned"))?;
-        let room = rooms.entry(room_id.to_owned()).or_insert_with(|| RoomSnapshot {
-            active_ingests: 0,
-            last_ingest_id: None,
-            room_id: room_id.to_owned(),
-            subscriber_sessions: 0,
-            updated_at: unix_now(),
-        });
+        let room = rooms
+            .entry(room_id.to_owned())
+            .or_insert_with(|| RoomSnapshot {
+                active_ingests: 0,
+                last_ingest_id: None,
+                room_id: room_id.to_owned(),
+                subscriber_sessions: 0,
+                updated_at: unix_now(),
+            });
 
         room.subscriber_sessions = room.subscriber_sessions.saturating_add(1);
         room.updated_at = unix_now();
@@ -99,4 +103,3 @@ pub fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
 }
-

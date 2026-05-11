@@ -40,13 +40,10 @@ export function issueRoomToken({
   const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(
     JSON.stringify(claims),
   )}`;
-  const signature = createHmac("sha256", secret)
-    .update(signingInput)
-    .digest();
+  const signature = createHmac("sha256", secret).update(signingInput).digest();
 
   return {
     claims,
     token: `${signingInput}.${base64Url(signature)}`,
   };
 }
-

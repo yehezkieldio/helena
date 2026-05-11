@@ -2,6 +2,7 @@
 
 import { Headphones, RadioReceiver, Waves } from "lucide-react";
 import { useMemo, useState } from "react";
+import { issueToken, subscribeMoq } from "@/lib/media-api";
 import { DEFAULT_ROOM_ID, normalizeRoomId } from "@/lib/rooms";
 
 type ListenPath = "webtransport-moq" | "webrtc" | "hls" | "websocket";
@@ -19,7 +20,9 @@ function choosePath(): ListenPath {
 
   const canPlayHls =
     typeof document !== "undefined" &&
-    document.createElement("audio").canPlayType("application/vnd.apple.mpegurl");
+    document
+      .createElement("audio")
+      .canPlayType("application/vnd.apple.mpegurl");
 
   return canPlayHls ? "hls" : "webrtc";
 }
@@ -52,32 +55,45 @@ export function ListenClient() {
 
   async function connect() {
     setConnected(false);
-    const tokenResponse = await fetch("/api/token", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ purpose: "subscribe", roomId }),
+    const token = await issueToken("subscribe", roomId).catch((error) => {
+      append(error instanceof Error ? error.message : "Could not issue token.");
+      return null;
     });
-    const tokenPayload = (await tokenResponse.json()) as {
-      token?: string;
-      error?: string;
-    };
 
-    if (!tokenResponse.ok || !tokenPayload.token) {
-      append(tokenPayload.error ?? "Could not issue subscribe token.");
-      return;
-    }
+    if (!token) return;
 
     if (path === "webtransport-moq") {
+      if (!window.WebTransport) {
+        append(
+          "WebTransport is unavailable in this browser; switching to WebRTC.",
+        );
+        setPath("webrtc");
+        return;
+      }
+
+      const subscription = await subscribeMoq({
+        roomId,
+        token: token.token,
+      }).catch((error) => {
+        append(
+          error instanceof Error ? error.message : "MoQ subscribe failed.",
+        );
+        return null;
+      });
+
+      if (!subscription) return;
+
       const mediaUrl =
         process.env.NEXT_PUBLIC_HELENA_MEDIA_WEBTRANSPORT_URL ??
         "https://127.0.0.1:8788/moq";
       append(`Opening WebTransport session: ${mediaUrl}`);
       try {
-        const transport = new WebTransport(
+        const transport = new window.WebTransport(
           `${mediaUrl}?room=${encodeURIComponent(roomId)}`,
         );
         await transport.ready;
         append("WebTransport ready; MoQ client handshake is the next layer.");
+        append(subscription.status ?? "MoQ subscription contract accepted.");
         setConnected(true);
       } catch (error) {
         append(
@@ -98,7 +114,9 @@ export function ListenClient() {
     <div className="grid">
       <section className="panel stack">
         <h1>Listen</h1>
-        <p>Subscribe with MoQ over WebTransport when the browser supports it.</p>
+        <p>
+          Subscribe with MoQ over WebTransport when the browser supports it.
+        </p>
         <div className="field">
           <label htmlFor="room">Room</label>
           <input
@@ -109,7 +127,9 @@ export function ListenClient() {
         </div>
         <div className="nav" aria-label="Delivery path">
           <button
-            className={path === "webtransport-moq" ? "button primary" : "button"}
+            className={
+              path === "webtransport-moq" ? "button primary" : "button"
+            }
             onClick={() => setPath("webtransport-moq")}
             type="button"
           >
@@ -147,7 +167,8 @@ export function ListenClient() {
             Endpoint <span className="badge">{endpoint}</span>
           </li>
           <li>
-            Session <span className="badge">{connected ? "ready" : "idle"}</span>
+            Session{" "}
+            <span className="badge">{connected ? "ready" : "idle"}</span>
           </li>
         </ul>
         <div className="log" aria-live="polite">
@@ -159,4 +180,3 @@ export function ListenClient() {
     </div>
   );
 }
-

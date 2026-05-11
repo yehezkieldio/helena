@@ -21,7 +21,11 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family:
-    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
 }
 
@@ -226,4 +230,3 @@ input {
     grid-template-columns: 1fr 1fr;
   }
 }
-

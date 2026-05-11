@@ -1,0 +1,7 @@
+.agents/
+.next/
+node_modules/
+target/
+Cargo.lock
+bun.lock
+
