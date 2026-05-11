@@ -22,10 +22,10 @@ HTTP signaling proxies. The Rust edge owns token verification, WebRTC ingest,
 room state, RTP/Opus packet handling, and relay fan-out.
 
 > [!WARNING]
-> Helena is not a production MoQ deployment yet. WebRTC ingest and WebSocket
-> fallback relay are implemented. Browser-native IETF MoQ over WebTransport is
-> still behind a protocol-version boundary and should be wired only after
-> choosing a concrete `moq-lite`/`moq-native` or `moq-relay` version.
+> Helena is not a complete production MoQ deployment yet. WebRTC ingest,
+> persistent Opus recording, and WebSocket fallback relay are implemented.
+> `moq-relay = 0.11.0` is the chosen MoQ edge, but the Rust media server still
+> needs a producer bridge that publishes captured Opus objects into the relay.
 
 ## Features
 
@@ -42,6 +42,9 @@ room state, RTP/Opus packet handling, and relay fan-out.
 - **Room Token Gate**: Next.js issues short-lived HMAC room tokens. The Rust
   edge verifies audience, expiry, purpose, room id, and signature before
   accepting publish or subscribe requests.
+- **moq-relay Token Gate**: the token API also issues short-lived
+  `moq-relay`-compatible HS256 JWTs scoped to `rooms/{roomId}` using the
+  relay's `root` plus `put`/`get` claim model.
 - **Observable Room State**: `/api/rooms/[roomId]` exposes active ingests,
   subscriber sessions, received Opus packets, recorded Opus bytes, generated
   MoQ-style objects, and the last ingest id.
@@ -55,6 +58,9 @@ room state, RTP/Opus packet handling, and relay fan-out.
 - **Operational UI**: `/listen` presents explicit delivery choices for
   MoQ/WebTransport, WebRTC, HLS, and WebSocket fallback paths instead of hiding
   browser capability gaps.
+- **Pinned MoQ Edge**: local development runs `moq-relay 0.11.0` with
+  `config/moq-relay.dev.toml`, generated local TLS, HTTP diagnostics, and a
+  generated HS256 JWK under `.helena/moq/root.jwk`.
 
 ## Pipeline
 
@@ -66,8 +72,9 @@ Each browser publish session runs through a fixed sequence of stages:
    creates an SDP offer, sets it locally, and waits briefly for ICE gathering so
    the Rust edge receives usable candidates in the SDP.
 3. **Authorize**: Next.js issues a `publish` room token signed with
-   `HELENA_TOKEN_SECRET`. The media edge verifies the token before touching
-   WebRTC state.
+   `HELENA_TOKEN_SECRET`. For MoQ subscribers, it also issues a
+   `moq-relay` JWT scoped to `rooms/{roomId}` and signed with
+   `HELENA_MOQ_RELAY_SECRET`.
 4. **Answer**: The Rust edge creates an answerer `RTCPeerConnection`, registers
    default codecs and interceptors, installs an Opus track reader, sets the
    browser offer as the remote description, creates an answer, gathers ICE, and
@@ -93,6 +100,8 @@ Each browser publish session runs through a fixed sequence of stages:
   calls.
 - `crates/media-core`: codec-neutral primitives currently focused on RTP/Opus
   packet mapping into MoQ-style objects.
+- `config`: local relay config files, currently `moq-relay.dev.toml`.
+- `scripts`: local helper scripts, currently the `moq-relay` JWK generator.
 - `crates/media-server`: Rust media edge with auth, room state, WebRTC ingest,
   Opus recording, HLS status output, MoQ session metadata, and WebSocket
   fallback relay.
@@ -112,22 +121,24 @@ Important media-server modules:
 
 Helena distinguishes between implemented behavior and intended transport shape:
 
-| Layer                          | Status          | Notes                                                                  |
-| ------------------------------ | --------------- | ---------------------------------------------------------------------- |
-| Browser microphone capture     | Implemented     | Uses `getUserMedia({ audio: true })`.                                  |
-| WebRTC publish signaling       | Implemented     | Next.js proxies the offer to Rust.                                     |
-| Rust SDP answer                | Implemented     | `webrtc = "0.8"` is pinned through `webrtc-rs`.                        |
-| RTP/Opus ingest                | Implemented     | Rust receives packets from the browser audio track.                    |
-| RTP to MoQ-style object bridge | Implemented     | Local bridge groups packets into ordered objects.                      |
-| Persistent Opus recording      | Implemented     | Writes `.hopus` payload archives and `index.jsonl` packet metadata.    |
-| WebSocket subscriber fallback  | Implemented     | Streams JSON metadata plus raw Opus binary frames.                     |
-| HLS fallback                   | Explicit gap    | Route returns a playlist-shaped 501 until segment generation is added. |
-| Native MoQ/WebTransport wire   | Not implemented | Must pin `moq-lite`/`moq-native`/`moq-relay` before production wiring. |
+| Layer                             | Status          | Notes                                                                  |
+| --------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| Browser microphone capture        | Implemented     | Uses `getUserMedia({ audio: true })`.                                  |
+| WebRTC publish signaling          | Implemented     | Next.js proxies the offer to Rust.                                     |
+| Rust SDP answer                   | Implemented     | `webrtc = "0.8"` is pinned through `webrtc-rs`.                        |
+| RTP/Opus ingest                   | Implemented     | Rust receives packets from the browser audio track.                    |
+| RTP to MoQ-style object bridge    | Implemented     | Local bridge groups packets into ordered objects.                      |
+| Persistent Opus recording         | Implemented     | Writes `.hopus` payload archives and `index.jsonl` packet metadata.    |
+| WebSocket subscriber fallback     | Implemented     | Streams JSON metadata plus raw Opus binary frames.                     |
+| moq-relay edge                    | Pinned          | Uses `moq-relay 0.11.0` via `bun run moq:relay`.                       |
+| moq-relay JWT issuance            | Implemented     | Next.js issues `root` plus `put`/`get` HS256 JWTs for relay sessions.  |
+| HLS fallback                      | Explicit gap    | Route returns a playlist-shaped 501 until segment generation is added. |
+| Media-server to moq-relay publish | Not implemented | Needs a producer bridge from captured Opus objects into `moq-relay`.   |
 
-MOQT is still evolving. As of this checkout, Helena treats
-`draft-ietf-moq-transport-17` as the target protocol family, but does not claim
-browser-native IETF MoQ interoperability yet. The current bridge output is
-structured to make the eventual MoQ session integration narrower and testable.
+MOQT is still evolving. Helena now uses the `moq.dev` stack as its pinned MoQ
+track: `moq-relay 0.11.0` for the edge and the relay's JWT model for browser
+authorization. The current bridge output is structured to make the next
+producer integration narrower and testable.
 
 ## Building from Source
 
@@ -165,7 +176,9 @@ The important values are:
 | `HELENA_MEDIA_BIND`                         | Rust media edge bind address                    | `127.0.0.1:8787`                     |
 | `HELENA_TOKEN_SECRET`                       | Shared HMAC secret used by Next.js and Rust     | `helena-dev-secret`                  |
 | `HELENA_RECORDING_DIR`                      | Persistent Opus packet archive directory        | `.helena/recordings`                 |
-| `NEXT_PUBLIC_HELENA_MEDIA_WEBTRANSPORT_URL` | Browser WebTransport target shown by `/listen`  | `https://127.0.0.1:8788/moq`         |
+| `HELENA_MOQ_RELAY_SECRET`                   | HS256 secret used for moq-relay JWTs            | `helena-moq-relay-dev-secret`        |
+| `HELENA_MOQ_RELAY_KEY`                      | Local JWK file generated for moq-relay          | `.helena/moq/root.jwk`               |
+| `NEXT_PUBLIC_HELENA_MEDIA_WEBTRANSPORT_URL` | Browser WebTransport target shown by `/listen`  | `https://127.0.0.1:8788`             |
 | `NEXT_PUBLIC_HELENA_MEDIA_WS_URL`           | Browser WebSocket fallback relay base URL       | `ws://127.0.0.1:8787/v1/fallback/ws` |
 
 For local development, both Next.js and Rust fall back to
@@ -184,7 +197,25 @@ Health check:
 curl http://127.0.0.1:8787/healthz
 ```
 
-### 3. Run the browser app
+### 3. Run moq-relay
+
+In a separate shell:
+
+```sh
+bun run moq:relay
+```
+
+This writes `.helena/moq/root.jwk` from `HELENA_MOQ_RELAY_SECRET`, installs
+`moq-relay 0.11.0` if needed, and runs:
+
+```sh
+moq-relay config/moq-relay.dev.toml
+```
+
+The local relay listens for QUIC/WebTransport on `https://127.0.0.1:8788` and
+exposes HTTP diagnostics on `http://127.0.0.1:8790`.
+
+### 4. Run the browser app
 
 ```sh
 bun run dev
@@ -196,7 +227,7 @@ Open:
 - `http://localhost:3000/listen` to connect with a subscriber path
 - `http://localhost:3000/api/rooms/lobby` to inspect room state
 
-### 4. Smoke the fallback relay
+### 5. Smoke the fallback relay
 
 Start a WebSocket subscriber with a `subscribe` token, then publish from the
 studio. The subscriber should receive JSON relay messages containing fields such
@@ -224,6 +255,7 @@ bun run build
 cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
+bun run moq:setup
 ```
 
 The `justfile` provides shorter grouped commands:
@@ -232,6 +264,7 @@ The `justfile` provides shorter grouped commands:
 just fmt
 just check
 just test
+just moq-relay
 ```
 
 `just check` runs the TypeScript typecheck and Rust workspace check. `just test`
@@ -250,8 +283,12 @@ for formatting and production builds.
 - **Publish**: `POST /v1/webrtc/publish` accepts an SDP offer with a valid
   `publish` token and returns an SDP answer.
 - **MoQ subscribe contract**: `POST /v1/moq/subscribe` verifies a `subscribe`
-  token and records subscriber intent. It does not establish a WebTransport MoQ
-  session yet.
+  token and records subscriber intent in the Helena media edge. Browser
+  WebTransport sessions use the `moqRelay.token` returned from `/api/token` and
+  connect directly to `moq-relay`.
+- **moq-relay**: `bun run moq:relay` runs `moq-relay 0.11.0` with
+  `config/moq-relay.dev.toml`. Next.js connects subscribers to
+  `/rooms/{roomId}?jwt=...`.
 - **WebSocket fallback**: `GET /v1/fallback/ws/{room_id}?token=...` upgrades to
   a WebSocket and streams paired JSON object metadata plus binary Opus payloads
   for that room.
@@ -272,8 +309,9 @@ for formatting and production builds.
   decode/resample/transcode path exists yet.
 - No HLS segment generation yet. The route now fails explicitly with `501`
   instead of pretending a playable playlist exists.
-- No browser-native MoQ/WebTransport delivery yet. The UI exposes it as the
-  preferred path, but the server does not run an IETF MoQ WebTransport session.
+- No media-server producer bridge into `moq-relay` yet. Browser subscribers can
+  authenticate against `moq-relay`, but captured Opus objects are not published
+  into that relay path yet.
 - The WebSocket fallback streams raw Opus frames, but the browser listener does
   not decode/play them yet.
 

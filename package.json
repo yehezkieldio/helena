@@ -8,7 +8,9 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "format": "prettier --check .",
-    "format:write": "prettier --write ."
+    "format:write": "prettier --write .",
+    "moq:setup": "bun scripts/ensure-moq-relay-key.mjs",
+    "moq:relay": "bun run moq:setup && cargo install --locked moq-relay --version 0.11.0 && moq-relay config/moq-relay.dev.toml"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",

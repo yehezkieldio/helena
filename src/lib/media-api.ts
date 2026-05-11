@@ -12,6 +12,11 @@ export type RoomSnapshot = {
 
 export type TokenResponse = {
   expiresAt: number;
+  moqRelay?: {
+    expiresAt: number;
+    path: string;
+    token: string;
+  };
   roomId: string;
   token: string;
 };

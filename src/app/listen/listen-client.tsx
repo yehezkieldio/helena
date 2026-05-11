@@ -140,15 +140,16 @@ export function ListenClient() {
 
       const mediaUrl =
         process.env.NEXT_PUBLIC_HELENA_MEDIA_WEBTRANSPORT_URL ??
-        "https://127.0.0.1:8788/moq";
-      append(`WEBTRANSPORT OPEN / ${mediaUrl}`);
+        "https://127.0.0.1:8788";
+      const relayPath = token.moqRelay?.path ?? `rooms/${roomId}`;
+      const relayToken = token.moqRelay?.token ?? token.token;
+      const relayUrl = `${mediaUrl.replace(/\/$/, "")}/${relayPath}?jwt=${encodeURIComponent(relayToken)}`;
+      append(`MOQ-RELAY OPEN / ${mediaUrl}`);
 
       try {
-        const transport = new window.WebTransport(
-          `${mediaUrl}?room=${encodeURIComponent(roomId)}`,
-        );
+        const transport = new window.WebTransport(relayUrl);
         await transport.ready;
-        append("WEBTRANSPORT READY / MOQ HANDSHAKE NEXT");
+        append("WEBTRANSPORT READY / MOQ-RELAY SESSION ACCEPTED");
         append(
           subscription.status?.toUpperCase() ??
             "MOQ SUBSCRIPTION CONTRACT ACCEPTED",

@@ -1,0 +1,14 @@
+[log]
+level = "info"
+
+[server]
+listen = "127.0.0.1:8788"
+
+[server.tls]
+generate = ["localhost", "127.0.0.1"]
+
+[web.http]
+listen = "127.0.0.1:8790"
+
+[auth]
+key = ".helena/moq/root.jwk"

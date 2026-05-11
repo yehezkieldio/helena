@@ -11,3 +11,5 @@ check:
 test:
     cargo test --workspace
 
+moq-relay:
+    bun run moq:relay
