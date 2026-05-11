@@ -1,0 +1,38 @@
+[workspace]
+members = ["crates/media-core", "crates/media-server"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/helena"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+hmac = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "warn"
+
+[workspace.lints.clippy]
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+panic = "warn"
+todo = "warn"
+unwrap_used = "warn"
