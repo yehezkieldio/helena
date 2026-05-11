@@ -17,7 +17,7 @@ export default function RootLayout({
           <header className="topbar">
             <Link className="brand" href="/">
               <strong>Helena</strong>
-              <span>Opus-first live audio rooms</span>
+              <span>RTP ingest / MoQ relay / fallback transport control</span>
             </Link>
             <nav className="nav" aria-label="Primary">
               <Link href="/studio">Studio</Link>

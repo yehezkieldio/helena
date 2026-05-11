@@ -1,6 +1,13 @@
 "use client";
 
-import { Mic, Radio, Square } from "lucide-react";
+import {
+  Microphone,
+  Pulse,
+  Radio,
+  Square,
+  WarningOctagon,
+} from "@phosphor-icons/react";
+import type { CSSProperties } from "react";
 import { useRef, useState } from "react";
 import { issueToken, publishOffer } from "@/lib/media-api";
 import { DEFAULT_ROOM_ID, normalizeRoomId } from "@/lib/rooms";
@@ -13,19 +20,32 @@ type PublishState =
   | "live"
   | "failed";
 
+const stateCopy: Record<PublishState, string> = {
+  accepted: "Offer accepted by edge",
+  capturing: "Microphone capture active",
+  failed: "Publish failed",
+  idle: "Awaiting operator input",
+  live: "Peer connection live",
+  signaling: "SDP offer in flight",
+};
+
 export function PublishClient() {
   const [roomId, setRoomId] = useState(DEFAULT_ROOM_ID);
   const [state, setState] = useState<PublishState>("idle");
   const [level, setLevel] = useState(0);
-  const [log, setLog] = useState<string[]>(["Studio ready."]);
+  const [error, setError] = useState<string | null>(null);
+  const [log, setLog] = useState<string[]>(["STUDIO READY"]);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const animationRef = useRef<number | null>(null);
+
+  const isBusy = state === "capturing" || state === "signaling";
 
   function append(message: string) {
     setLog((current) => [
-      `${new Date().toLocaleTimeString()} ${message}`,
-      ...current.slice(0, 30),
+      `${new Date().toLocaleTimeString()} / ${message}`,
+      ...current.slice(0, 34),
     ]);
   }
 
@@ -34,11 +54,17 @@ export function PublishClient() {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
     }
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+    if (context && context.state !== "closed") {
+      void context.close();
+    }
     setLevel(0);
   }
 
   function startMeter(stream: MediaStream) {
     const context = new AudioContext();
+    audioContextRef.current = context;
     const analyser = context.createAnalyser();
     analyser.fftSize = 512;
     context.createMediaStreamSource(stream).connect(analyser);
@@ -57,8 +83,10 @@ export function PublishClient() {
   }
 
   async function publish() {
+    setError(null);
     setState("capturing");
-    append("Requesting microphone.");
+    append("REQUESTING MICROPHONE");
+
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -81,14 +109,20 @@ export function PublishClient() {
     }
 
     peer.onconnectionstatechange = () => {
-      append(`Peer state: ${peer.connectionState}.`);
+      append(`PEER STATE / ${peer.connectionState.toUpperCase()}`);
       if (peer.connectionState === "connected") {
         setState("live");
+      }
+      if (peer.connectionState === "failed") {
+        setState("failed");
+        setError(
+          "Peer connection failed before the media edge accepted audio.",
+        );
       }
     };
 
     setState("signaling");
-    append("Creating SDP offer.");
+    append("CREATING SDP OFFER");
     const offer = await peer.createOffer({
       offerToReceiveAudio: false,
       offerToReceiveVideo: false,
@@ -96,6 +130,7 @@ export function PublishClient() {
     await peer.setLocalDescription(offer);
 
     const token = await issueToken("publish", roomId);
+    append("ROOM TOKEN ISSUED");
     const signalPayload = await publishOffer({
       offer: peer.localDescription,
       roomId,
@@ -104,23 +139,28 @@ export function PublishClient() {
 
     if (signalPayload.answer) {
       await peer.setRemoteDescription(signalPayload.answer);
-      append("SDP answer accepted.");
+      append("SDP ANSWER ACCEPTED");
       return;
     }
 
     setState("accepted");
     append(
-      signalPayload.status ??
-        "Media edge accepted the offer contract; SDP answer is not implemented yet.",
+      signalPayload.status?.toUpperCase() ??
+        "MEDIA EDGE ACCEPTED OFFER CONTRACT",
     );
   }
 
   async function onPublish() {
     try {
       await publish();
-    } catch (error) {
+    } catch (unknownError) {
+      const message =
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Publish failed.";
       setState("failed");
-      append(error instanceof Error ? error.message : "Publish failed.");
+      setError(message);
+      append(message.toUpperCase());
     }
   }
 
@@ -131,63 +171,115 @@ export function PublishClient() {
     streamRef.current = null;
     stopMeter();
     setState("idle");
-    append("Studio stopped.");
+    setError(null);
+    append("STUDIO STOPPED");
   }
 
   return (
-    <div className="grid">
-      <section className="panel stack">
-        <h1>Studio</h1>
-        <p>Capture the microphone and publish Opus through WebRTC ingest.</p>
-        <div className="field">
-          <label htmlFor="room">Room</label>
-          <input
-            id="room"
-            value={roomId}
-            onChange={(event) => setRoomId(normalizeRoomId(event.target.value))}
-          />
-        </div>
-        <div className="meter" aria-label="Microphone level">
-          <span style={{ "--level": `${level}%` } as React.CSSProperties} />
-        </div>
-        <div className="nav">
-          <button
-            className="button primary"
-            disabled={state !== "idle" && state !== "failed"}
-            onClick={onPublish}
-            type="button"
-          >
-            <Radio size={18} />
-            Publish
-          </button>
-          <button className="button" onClick={stop} type="button">
-            <Square size={18} />
-            Stop
-          </button>
-        </div>
-      </section>
-      <aside className="panel stack">
-        <h2>Status</h2>
-        <ul className="status-list">
-          <li>
-            Capture <span className="badge">{state}</span>
-          </li>
-          <li>
-            Audio <span className="badge">Opus target</span>
-          </li>
-          <li>
-            Input{" "}
-            <span className="badge">
-              <Mic size={14} /> mic
-            </span>
-          </li>
-        </ul>
-        <div className="log" aria-live="polite">
-          {log.map((entry) => (
-            <div key={entry}>{entry}</div>
-          ))}
-        </div>
-      </aside>
+    <div className="page-frame">
+      <div className="app-grid">
+        <section className="control-panel" aria-labelledby="studio-title">
+          <div className="page-kicker">
+            <span>[ WEBRTC PUBLISHER ]</span>
+            <samp>UNIT / STUDIO-A / OPUS ONLY</samp>
+          </div>
+          <h1 id="studio-title">Mic capture to ingest edge.</h1>
+          <p>
+            Acquire the browser microphone, create a WebRTC publisher offer,
+            issue a short-lived room token, and submit the session to the Rust
+            media edge for RTP/Opus ingest.
+          </p>
+
+          <div className="field">
+            <label htmlFor="room">Room identifier</label>
+            <input
+              id="room"
+              value={roomId}
+              onChange={(event) =>
+                setRoomId(normalizeRoomId(event.target.value))
+              }
+              aria-describedby="room-helper"
+            />
+            <small id="room-helper">
+              Lowercase letters, numbers, and hyphen-safe routing.
+            </small>
+          </div>
+
+          <div className="meter-block">
+            <div className="meter-label">
+              <span>Input envelope</span>
+              <output>{level}%</output>
+            </div>
+            <div className="meter" aria-label="Microphone level">
+              <span style={{ "--level": `${level}%` } as CSSProperties} />
+            </div>
+          </div>
+
+          {isBusy ? (
+            <div className="loading-state" role="status">
+              {stateCopy[state]}
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="error-state" role="alert">
+              <WarningOctagon size={18} weight="bold" /> {error}
+            </div>
+          ) : null}
+
+          <div className="button-row">
+            <button
+              className="button primary"
+              disabled={state !== "idle" && state !== "failed"}
+              onClick={onPublish}
+              type="button"
+            >
+              <Radio size={18} weight="bold" />
+              Publish
+            </button>
+            <button className="button" onClick={stop} type="button">
+              <Square size={18} weight="bold" />
+              Stop
+            </button>
+          </div>
+        </section>
+
+        <aside className="telemetry-panel" aria-label="Studio telemetry">
+          <h2 className="telemetry-title">[ Publisher telemetry ]</h2>
+          <ul className="status-list">
+            <li>
+              Capture <span className="badge">{state}</span>
+            </li>
+            <li>
+              Interpretation <span className="badge">{stateCopy[state]}</span>
+            </li>
+            <li>
+              Audio{" "}
+              <span className="badge">
+                <Pulse size={14} weight="bold" /> Opus target
+              </span>
+            </li>
+            <li>
+              Input{" "}
+              <span className="badge">
+                <Microphone size={14} weight="bold" /> mic
+              </span>
+            </li>
+          </ul>
+
+          {log.length === 0 ? (
+            <div className="empty-state">
+              No studio events have been recorded for this room.
+            </div>
+          ) : (
+            <div className="log" aria-live="polite">
+              {log.map((entry, index) => (
+                <div key={`${entry}-${index}`}>{entry}</div>
+              ))}
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
